@@ -3,6 +3,7 @@ export {
   IndexedDbSubscriptionRepository,
 } from "./indexed-db-repository.js";
 export type {
+  IndexedDbConnectionState,
   IndexedDbLifecycleFailure,
   IndexedDbRepositoryOptions,
 } from "./indexed-db-repository.js";

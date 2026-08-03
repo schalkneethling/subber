@@ -104,8 +104,53 @@ describe("IndexedDB migrations", () => {
       currentVersion: CURRENT_SCHEMA_VERSION,
       blockedVersion: CURRENT_SCHEMA_VERSION + 1,
     });
+    expect(repository.connectionState).toBe("released");
+    await expect(repository.getSettings()).rejects.toBe(lifecycleErrors[0]);
     upgradedDatabase.close();
     repository.close();
+  });
+
+  it("exposes a released connection and reopens without a lifecycle callback", async () => {
+    let blockingCallback:
+      | ((
+          currentVersion: number,
+          blockedVersion: number | null,
+          event: IDBVersionChangeEvent,
+        ) => void)
+      | undefined;
+    let openCount = 0;
+    const firstClose = vi.fn<() => void>();
+    const secondClose = vi.fn<() => void>();
+    const secondGet = vi.fn<() => Promise<undefined>>().mockResolvedValue(undefined);
+    const openDatabase = <DBTypes extends DBSchema | unknown = unknown>(
+      _name: string,
+      _version?: number,
+      suppliedCallbacks: OpenDBCallbacks<DBTypes> = {},
+    ): Promise<IDBPDatabase<DBTypes>> => {
+      blockingCallback = suppliedCallbacks.blocking;
+      const database =
+        openCount++ === 0 ? { close: firstClose } : { close: secondClose, get: secondGet };
+      return Promise.resolve(database as unknown as IDBPDatabase<DBTypes>);
+    };
+    const repository = await IndexedDbSubscriptionRepository.open({ openDatabase });
+
+    blockingCallback?.(
+      CURRENT_SCHEMA_VERSION,
+      CURRENT_SCHEMA_VERSION + 1,
+      {} as IDBVersionChangeEvent,
+    );
+
+    expect(repository.connectionState).toBe("released");
+    expect(firstClose).toHaveBeenCalledOnce();
+    await expect(repository.getSettings()).rejects.toMatchObject({ failure: "blocking" });
+
+    const reopened = await repository.reopen();
+    expect(reopened.connectionState).toBe("open");
+    await expect(reopened.getSettings()).resolves.toBeNull();
+    expect(secondGet).toHaveBeenCalledWith("settings", "settings");
+
+    reopened.close();
+    expect(secondClose).toHaveBeenCalledOnce();
   });
 
   it("reports an abnormal termination with null version metadata", async () => {
@@ -135,6 +180,8 @@ describe("IndexedDB migrations", () => {
       currentVersion: null,
       blockedVersion: null,
     });
+    expect(repository.connectionState).toBe("released");
+    await expect(repository.getSettings()).rejects.toBe(lifecycleErrors[0]);
     repository.close();
     expect(close).toHaveBeenCalledOnce();
   });

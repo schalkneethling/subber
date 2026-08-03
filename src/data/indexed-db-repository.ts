@@ -50,6 +50,7 @@ export interface IndexedDbRepositoryOptions {
 }
 
 export type IndexedDbLifecycleFailure = "blocked" | "blocking" | "terminated";
+export type IndexedDbConnectionState = "open" | "released" | "closed";
 
 export class IndexedDbLifecycleError extends Error {
   readonly failure: IndexedDbLifecycleFailure;
@@ -70,30 +71,30 @@ export class IndexedDbLifecycleError extends Error {
 }
 
 export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
-  readonly #database: IDBPDatabase<SubberDatabase>;
+  #database: IDBPDatabase<SubberDatabase> | null;
+  readonly #options: IndexedDbRepositoryOptions;
+  #connectionState: IndexedDbConnectionState = "open";
+  #releaseError: IndexedDbLifecycleError | null = null;
 
-  private constructor(database: IDBPDatabase<SubberDatabase>) {
+  private constructor(database: IDBPDatabase<SubberDatabase>, options: IndexedDbRepositoryOptions) {
     this.#database = database;
+    this.#options = { ...options };
+  }
+
+  get connectionState(): IndexedDbConnectionState {
+    return this.#connectionState;
   }
 
   static async open(
     options: IndexedDbRepositoryOptions = {},
   ): Promise<IndexedDbSubscriptionRepository> {
-    let openedDatabase: IDBPDatabase<SubberDatabase> | undefined;
+    let repository: IndexedDbSubscriptionRepository | undefined;
+    let pendingRelease: IndexedDbLifecycleError | null = null;
     let blocked = false;
     let rejectBlocked!: (error: IndexedDbLifecycleError) => void;
     const blockedPromise = new Promise<never>((_resolve, reject) => {
       rejectBlocked = reject;
     });
-    const report = (
-      failure: IndexedDbLifecycleFailure,
-      currentVersion: number | null = null,
-      blockedVersion: number | null = null,
-    ) => {
-      options.onLifecycleError?.(
-        new IndexedDbLifecycleError(failure, currentVersion, blockedVersion),
-      );
-    };
     const openPromise = (options.openDatabase ?? openDB)<SubberDatabase>(
       options.databaseName ?? "subber",
       CURRENT_SCHEMA_VERSION,
@@ -106,11 +107,16 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
           options.onLifecycleError?.(error);
         },
         blocking(currentVersion, blockedVersion) {
-          openedDatabase?.close();
-          report("blocking", currentVersion, blockedVersion);
+          const error = new IndexedDbLifecycleError("blocking", currentVersion, blockedVersion);
+          if (repository) repository.#release(error);
+          else pendingRelease = error;
+          options.onLifecycleError?.(error);
         },
         terminated() {
-          report("terminated");
+          const error = new IndexedDbLifecycleError("terminated");
+          if (repository) repository.#release(error);
+          else pendingRelease = error;
+          options.onLifecycleError?.(error);
         },
         upgrade(database, oldVersion, newVersion, transaction) {
           applyMigrations(database, transaction, oldVersion, newVersion ?? CURRENT_SCHEMA_VERSION);
@@ -125,20 +131,21 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
     );
 
     const database = await Promise.race([openPromise, blockedPromise]);
-    openedDatabase = database;
+    repository = new IndexedDbSubscriptionRepository(database, options);
+    if (pendingRelease) repository.#release(pendingRelease);
 
-    return new IndexedDbSubscriptionRepository(database);
+    return repository;
   }
 
   async getSubscription(id: string): Promise<Subscription | null> {
-    const subscription = await this.#database.get("subscriptions", id);
+    const subscription = await this.#activeDatabase().get("subscriptions", id);
     if (!subscription) return null;
     validateSubscription(subscription);
     return subscription;
   }
 
   async listSubscriptions(collection: SubscriptionCollection = "active"): Promise<Subscription[]> {
-    const subscriptions = await this.#database.getAll("subscriptions");
+    const subscriptions = await this.#activeDatabase().getAll("subscriptions");
     subscriptions.forEach(validateSubscription);
     const selected = subscriptions.filter((subscription) => {
       if (collection === "all") return true;
@@ -151,9 +158,10 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
   }
 
   async listEvents(subscriptionId?: string): Promise<SubscriptionEvent[]> {
+    const database = this.#activeDatabase();
     const events = subscriptionId
-      ? await this.#database.getAllFromIndex("events", "by-subscription", subscriptionId)
-      : await this.#database.getAll("events");
+      ? await database.getAllFromIndex("events", "by-subscription", subscriptionId)
+      : await database.getAll("events");
     events.forEach(validateEvent);
 
     return events.sort((left, right) => {
@@ -162,21 +170,21 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
   }
 
   async getSettings(): Promise<Settings | null> {
-    const settings = await this.#database.get("settings", SETTINGS_KEY);
+    const settings = await this.#activeDatabase().get("settings", SETTINGS_KEY);
     if (!settings) return null;
     validateSettings(settings);
     return settings;
   }
 
   async getEventRateEnrichment(eventId: string): Promise<EventRateEnrichment | null> {
-    const enrichment = await this.#database.get("eventRateEnrichments", eventId);
+    const enrichment = await this.#activeDatabase().get("eventRateEnrichments", eventId);
     if (!enrichment) return null;
     validateEventRateEnrichment(enrichment);
     return enrichment;
   }
 
   async listEventRateEnrichments(): Promise<EventRateEnrichment[]> {
-    const enrichments = await this.#database.getAll("eventRateEnrichments");
+    const enrichments = await this.#activeDatabase().getAll("eventRateEnrichments");
     enrichments.forEach(validateEventRateEnrichment);
     return enrichments.sort(
       (left, right) =>
@@ -188,7 +196,7 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
   async commit(unitOfWork: RepositoryCommit): Promise<void> {
     validateCommit(unitOfWork);
 
-    const transaction = this.#database.transaction(
+    const transaction = this.#activeDatabase().transaction(
       ["subscriptions", "events", "eventRateEnrichments", "settings"],
       "readwrite",
     );
@@ -229,7 +237,7 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
   }
 
   async eraseSubscription(id: string): Promise<void> {
-    const transaction = this.#database.transaction(
+    const transaction = this.#activeDatabase().transaction(
       ["subscriptions", "events", "eventRateEnrichments"],
       "readwrite",
     );
@@ -246,7 +254,36 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
   }
 
   close(): void {
-    this.#database.close();
+    this.#database?.close();
+    this.#database = null;
+    this.#connectionState = "closed";
+    this.#releaseError = null;
+  }
+
+  async reopen(): Promise<IndexedDbSubscriptionRepository> {
+    if (this.#connectionState !== "released") {
+      throw new Error("Only a released IndexedDB repository can be reopened");
+    }
+    return IndexedDbSubscriptionRepository.open(this.#options);
+  }
+
+  #release(error: IndexedDbLifecycleError): void {
+    if (this.#connectionState !== "open") return;
+    this.#connectionState = "released";
+    this.#releaseError = error;
+    this.#database?.close();
+    this.#database = null;
+  }
+
+  #activeDatabase(): IDBPDatabase<SubberDatabase> {
+    if (this.#connectionState === "released") {
+      throw this.#releaseError ?? new Error("The IndexedDB repository connection was released");
+    }
+    if (this.#connectionState === "closed") {
+      throw new Error("The IndexedDB repository is closed");
+    }
+    if (!this.#database) throw new Error("The IndexedDB repository has no active connection");
+    return this.#database;
   }
 }
 
