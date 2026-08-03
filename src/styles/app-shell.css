@@ -1,0 +1,202 @@
+/* stylelint-disable selector-class-pattern -- Component classes follow the required BEM syntax. */
+@layer components {
+  .skip-link {
+    position: fixed;
+    z-index: 1;
+    inset-block-start: var(--space-4);
+    inset-inline-start: var(--space-4);
+    min-block-size: 2.75rem;
+    padding-block: var(--space-2);
+    padding-inline: var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-small);
+    background-color: var(--color-surface);
+    box-shadow: 0 0.5rem 1.5rem var(--color-shadow);
+    color: var(--color-text);
+    font-weight: 700;
+    text-decoration: none;
+    transform: translateY(calc(-100% - var(--space-6)));
+    transition: transform var(--motion-duration-fast) var(--motion-easing-standard);
+  }
+
+  .skip-link:focus-visible {
+    transform: translateY(0);
+  }
+
+  .app-shell {
+    container: shell / inline-size;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    min-block-size: 100vh;
+    min-block-size: 100dvb;
+  }
+
+  .app-shell__header,
+  .app-shell__main,
+  .app-shell__footer {
+    inline-size: min(100%, 76rem);
+    margin-inline: auto;
+  }
+
+  .app-shell__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-block-end: 1px solid var(--color-border);
+  }
+
+  .wordmark {
+    min-inline-size: 2.75rem;
+    min-block-size: 2.75rem;
+    color: var(--color-text);
+    font-size: var(--font-size-1);
+    font-weight: 760;
+    letter-spacing: -0.04em;
+    line-height: 2.75rem;
+    text-decoration: none;
+  }
+
+  .wordmark__mark {
+    color: var(--color-accent);
+  }
+
+  .app-shell__privacy {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-small);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+
+  .app-shell__main {
+    display: grid;
+    align-items: center;
+  }
+
+  .empty-state {
+    position: relative;
+    max-inline-size: var(--measure-copy);
+  }
+
+  .empty-state::before {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: calc(0rem - var(--space-5));
+    inline-size: 0.25rem;
+    border-radius: var(--radius-small);
+    background-color: var(--color-accent);
+    content: "";
+  }
+
+  .empty-state__copy {
+    max-inline-size: var(--measure-copy);
+  }
+
+  .empty-state__eyebrow {
+    margin-block-end: var(--space-3);
+    color: var(--color-accent-strong);
+    font-size: var(--font-size-small);
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .empty-state__title {
+    max-inline-size: 14ch;
+    font-size: var(--font-size-4);
+    font-weight: 720;
+    letter-spacing: -0.045em;
+    line-height: var(--line-height-tight);
+  }
+
+  .empty-state__description {
+    max-inline-size: 35rem;
+    margin-block-start: var(--space-5);
+    color: var(--color-text-muted);
+    font-size: var(--font-size-1);
+  }
+
+  .app-shell__footer {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-small);
+  }
+}
+
+/* Shared First: only viewport-specific values live in these self-contained ranges. */
+@media (width < 45rem) {
+  .app-shell__header,
+  .app-shell__main,
+  .app-shell__footer {
+    padding-inline: var(--space-5);
+  }
+
+  .app-shell__header {
+    padding-block: var(--space-4);
+  }
+
+  .app-shell__main {
+    padding-block: var(--space-7);
+  }
+
+  .empty-state {
+    margin-inline: var(--space-5) 0;
+  }
+
+  .app-shell__footer {
+    padding-block: var(--space-5);
+  }
+}
+
+@media (45rem <= width < 80rem) {
+  .app-shell__header,
+  .app-shell__main,
+  .app-shell__footer {
+    padding-inline: var(--space-6);
+  }
+
+  .app-shell__header {
+    padding-block: var(--space-5);
+  }
+
+  .app-shell__main {
+    padding-block: var(--space-8);
+  }
+
+  .empty-state {
+    margin-inline: var(--space-5) 0;
+  }
+
+  .app-shell__footer {
+    padding-block: var(--space-6);
+  }
+}
+
+@media (width >= 80rem) {
+  .app-shell__header,
+  .app-shell__main,
+  .app-shell__footer {
+    padding-inline: 0;
+  }
+
+  .app-shell__header {
+    padding-block: var(--space-5);
+  }
+
+  .app-shell__main {
+    padding-block: var(--space-8);
+  }
+
+  .empty-state {
+    margin-inline: var(--space-5) 0;
+  }
+
+  .app-shell__footer {
+    padding-block: var(--space-6);
+  }
+}
+
+@container shell (width < 32rem) {
+  .app-shell__privacy {
+    max-inline-size: 8rem;
+    text-align: end;
+  }
+}

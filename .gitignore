@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+playwright-report/
+test-results/
+
+# Calavera's downloaded package cache (state and lock files remain versioned)
+.calavera/cache/
+.calavera/packages/
+
+# Playwright browser binaries (when installed in-project)
+.playwright/
+
+# Operating system and editor state
+.DS_Store
+*.swp
+
+# Varlock
+# Varlock recommends committing non-local .env.* files.
+# Review broader existing ignore rules before opting into that convention.
+!.env.schema
+.env
+.env.local
+.env.*.local

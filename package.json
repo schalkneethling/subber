@@ -1,0 +1,56 @@
+{
+  "name": "subber",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A local-first subscription tracker.",
+  "keywords": [
+    "local-first",
+    "pwa",
+    "subscriptions"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "oxlint --config oxlint.json . && stylelint \"**/*.{css,scss}\" --max-warnings 0",
+    "lint:fix": "oxlint --config oxlint.json --fix . && stylelint \"**/*.{css,scss}\" --fix --max-warnings 0",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "typecheck": "tsc --noEmit",
+    "knip": "knip",
+    "lint:html": "html-validate \"**/*.html\"",
+    "env:load": "varlock load",
+    "quality": "pnpm lint && pnpm lint:html && pnpm format:check && pnpm typecheck && pnpm knip && pnpm env:load",
+    "test": "pnpm test:unit && pnpm test:e2e",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:debug": "playwright test --debug"
+  },
+  "dependencies": {
+    "idb": "^8.0.3"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.1",
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^26.1.2",
+    "fake-indexeddb": "^6.2.5",
+    "html-validate": "^11.6.0",
+    "knip": "^6.31.0",
+    "oxfmt": "^0.61.0",
+    "oxlint": "^1.76.0",
+    "stylelint": "^17.14.1",
+    "stylelint-config-standard": "^40.0.0",
+    "stylelint-plugin-use-baseline": "^1.4.5",
+    "typescript": "^7.0.2",
+    "varlock": "^1.16.0",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "packageManager": "pnpm@11.10.0"
+}
