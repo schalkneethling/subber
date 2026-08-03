@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Subber gives you a private, clear view of your subscription spending."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f3ed" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121514" media="(prefers-color-scheme: dark)" />
+    <title>Subber — See what you pay for</title>
+    <link
+      rel="preload"
+      href="/fonts/inter-latin-variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="/src/styles/main.css" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <div class="app-shell" data-app-shell>
+      <header class="app-shell__header">
+        <a class="wordmark" href="/"
+          >subber<span class="wordmark__mark" aria-hidden="true">.</span></a
+        >
+        <p class="app-shell__privacy">Private by design</p>
+      </header>
+
+      <main id="main-content" class="app-shell__main" tabindex="-1">
+        <section class="empty-state" aria-labelledby="empty-state-title">
+          <div class="empty-state__copy">
+            <p class="empty-state__eyebrow">Your subscriptions, made clear</p>
+            <h1 id="empty-state-title" class="empty-state__title">
+              Know what leaves your account.
+            </h1>
+            <p class="empty-state__description">
+              Subber keeps a simple view of recurring costs on this device, so you can decide what
+              is still worth paying for.
+            </p>
+          </div>
+        </section>
+      </main>
+
+      <footer class="app-shell__footer">
+        <p>Your data stays with you.</p>
+      </footer>
+    </div>
+  </body>
+</html>

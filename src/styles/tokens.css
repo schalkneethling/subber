@@ -1,0 +1,141 @@
+@font-face {
+  font-family: "Subber Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin-variable.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Metric overrides match Inter to Arial while the self-hosted face loads. */
+@font-face {
+  font-family: "Subber Inter Fallback";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: local("Arial");
+  ascent-override: 90.2%;
+  descent-override: 22.48%;
+  line-gap-override: 0%;
+  size-adjust: 107.4%;
+}
+
+:root {
+  color-scheme: light dark;
+
+  /* A restrained minor-third scale (1.2), bounded with fluid interpolation. */
+  --type-ratio: 1.2;
+  --font-size-small: clamp(0.79rem, 0.77rem + 0.08vi, 0.83rem);
+  --font-size-0: clamp(1rem, 0.97rem + 0.13vi, 1.06rem);
+  --font-size-1: clamp(1.2rem, 1.14rem + 0.26vi, 1.33rem);
+  --font-size-2: clamp(1.44rem, 1.32rem + 0.52vi, 1.7rem);
+  --font-size-3: clamp(1.73rem, 1.5rem + 0.97vi, 2.22rem);
+  --font-size-4: clamp(2.07rem, 1.64rem + 1.85vi, 3rem);
+  --line-height-tight: 1.08;
+  --line-height-copy: 1.55;
+  --measure-copy: 37rem;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4.5rem;
+  --radius-small: 0.5rem;
+  --radius-medium: 1rem;
+  --radius-large: 1.5rem;
+  --motion-duration-fast: 120ms;
+  --motion-duration-standard: 180ms;
+  --motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Hex values are the baseline; supported browsers receive the OKLCH palette below. */
+  --color-canvas: #f5f3ed;
+  --color-surface: #fffcf5;
+  --color-surface-subtle: #e9e7df;
+  --color-text: #1b2421;
+  --color-text-muted: #59635f;
+  --color-border: #d6d5cc;
+  --color-accent: #147a62;
+  --color-accent-strong: #075c49;
+  --color-focus: #005fcc;
+  --color-shadow: rgb(27 36 33 / 9%);
+}
+
+/* stylelint-disable-next-line plugin/use-baseline -- The query preserves the required hex fallback. */
+@supports (color: oklch(50% 0.1 180)) {
+  :root {
+    --color-canvas: oklch(96.5% 0.012 95deg);
+    --color-surface: oklch(99% 0.012 93deg);
+    --color-surface-subtle: oklch(92.5% 0.012 95deg);
+    --color-text: oklch(26% 0.02 165deg);
+    --color-text-muted: oklch(48% 0.018 165deg);
+    --color-border: oklch(86% 0.013 100deg);
+    --color-accent: oklch(52% 0.11 165deg);
+    --color-accent-strong: oklch(42% 0.1 165deg);
+    --color-focus: oklch(51% 0.19 255deg);
+    --color-shadow: oklch(26% 0.02 165deg / 9%);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #121514;
+    --color-surface: #1b201e;
+    --color-surface-subtle: #252b29;
+    --color-text: #f0f1ec;
+    --color-text-muted: #b1b8b4;
+    --color-border: #3b4440;
+    --color-accent: #5ad0ad;
+    --color-accent-strong: #8ce3c7;
+    --color-focus: #84b6ff;
+    --color-shadow: rgb(0 0 0 / 25%);
+  }
+}
+
+/* stylelint-disable-next-line plugin/use-baseline -- The query preserves the required hex fallback. */
+@supports (color: oklch(50% 0.1 180)) {
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-canvas: oklch(19% 0.012 165deg);
+      --color-surface: oklch(24% 0.014 165deg);
+      --color-surface-subtle: oklch(29% 0.014 165deg);
+      --color-text: oklch(94% 0.01 110deg);
+      --color-text-muted: oklch(76% 0.015 165deg);
+      --color-border: oklch(36% 0.018 165deg);
+      --color-accent: oklch(78% 0.11 165deg);
+      --color-accent-strong: oklch(85% 0.09 165deg);
+      --color-focus: oklch(76% 0.13 255deg);
+      --color-shadow: oklch(0% 0 0deg / 25%);
+    }
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --color-text: #000;
+    --color-text-muted: #252b29;
+    --color-border: #4b514f;
+    --color-accent: #005f49;
+    --color-focus: #004fc0;
+  }
+}
+
+@media (prefers-color-scheme: dark) and (prefers-contrast: more) {
+  :root {
+    --color-text: #fff;
+    --color-text-muted: #e6ebe8;
+    --color-border: #c2cbc7;
+    --color-accent: #87e8c8;
+    --color-focus: #b6d2ff;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration-fast: 0.01ms;
+    --motion-duration-standard: 0.01ms;
+  }
+}
