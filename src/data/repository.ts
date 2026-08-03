@@ -1,4 +1,4 @@
-import type { Settings, Subscription, SubscriptionEvent } from "./models.js";
+import type { EventRateEnrichment, Settings, Subscription, SubscriptionEvent } from "./models.js";
 
 export type SubscriptionCollection = "active" | "archived" | "all";
 
@@ -9,6 +9,7 @@ export type SubscriptionCollection = "active" | "archived" | "all";
 export interface RepositoryCommit {
   subscriptions?: readonly Subscription[];
   events?: readonly SubscriptionEvent[];
+  eventRateEnrichments?: readonly EventRateEnrichment[];
   settings?: Settings;
 }
 
@@ -18,6 +19,8 @@ export interface SubscriptionRepository {
   listSubscriptions(collection?: SubscriptionCollection): Promise<Subscription[]>;
   /** Events are returned in reverse chronological order. */
   listEvents(subscriptionId?: string): Promise<SubscriptionEvent[]>;
+  getEventRateEnrichment(eventId: string): Promise<EventRateEnrichment | null>;
+  listEventRateEnrichments(): Promise<EventRateEnrichment[]>;
   getSettings(): Promise<Settings | null>;
   commit(unitOfWork: RepositoryCommit): Promise<void>;
   eraseSubscription(id: string): Promise<void>;

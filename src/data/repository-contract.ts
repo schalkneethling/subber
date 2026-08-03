@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CURRENT_SCHEMA_VERSION } from "./migrations.js";
-import type { Settings, Subscription, SubscriptionEvent } from "./models.js";
+import { createPartsPerMillion } from "./models.js";
+import type {
+  EventRateEnrichment,
+  PartsPerMillion,
+  Settings,
+  Subscription,
+  SubscriptionEvent,
+} from "./models.js";
 import type { SubscriptionRepository } from "./repository.js";
 
 export function runRepositoryContract(
@@ -55,6 +62,11 @@ export function runRepositoryContract(
         newer.id,
         older.id,
       ]);
+      expect((await repository.listSubscriptions("all")).map(({ id }) => id)).toEqual([
+        newer.id,
+        archived.id,
+        older.id,
+      ]);
     });
 
     it("returns archived subscriptions by most recent archive", async () => {
@@ -102,7 +114,7 @@ export function runRepositoryContract(
       ]);
       await expect(
         repository.commit({ events: [{ ...older, amountMinor: older.amountMinor + 1 }] }),
-      ).rejects.toBeDefined();
+      ).rejects.toMatchObject({ name: "ConstraintError" });
       expect(await repository.listEvents(firstSubscription.id)).toContainEqual(older);
     });
 
@@ -115,6 +127,71 @@ export function runRepositoryContract(
       const updated = { ...original, displayCurrency: "EUR" };
       await repository.commit({ settings: updated });
       expect(await repository.getSettings()).toEqual(updated);
+    });
+
+    it("atomically inserts a captured rate enrichment with its event", async () => {
+      const record = subscription();
+      const added = event({ subscriptionId: record.id });
+      const captured = enrichment({ eventId: added.id });
+
+      await repository.commit({
+        subscriptions: [record],
+        events: [added],
+        eventRateEnrichments: [captured],
+      });
+
+      expect(await repository.getEventRateEnrichment(added.id)).toEqual(captured);
+      expect(await repository.listEventRateEnrichments()).toEqual([captured]);
+    });
+
+    it("allows phase-one events to remain unenriched", async () => {
+      const record = subscription();
+      const added = event({ subscriptionId: record.id });
+      await repository.commit({ subscriptions: [record], events: [added] });
+
+      expect(await repository.getEventRateEnrichment(added.id)).toBeNull();
+      expect(await repository.listEventRateEnrichments()).toEqual([]);
+    });
+
+    it("rejects orphan enrichments with an exact data error", async () => {
+      await expect(
+        repository.commit({ eventRateEnrichments: [enrichment()] }),
+      ).rejects.toMatchObject({
+        name: "DataError",
+        message: "A rate enrichment must reference an existing event",
+      });
+    });
+
+    it("keeps enrichments immutable and rolls back a conflicting unit of work", async () => {
+      const record = subscription();
+      const added = event({ subscriptionId: record.id });
+      const captured = enrichment({ eventId: added.id });
+      const originalSettings = settings();
+      await repository.commit({
+        subscriptions: [record],
+        events: [added],
+        eventRateEnrichments: [captured],
+        settings: originalSettings,
+      });
+
+      const changed = {
+        ...record,
+        amountMinor: 2_000,
+        updatedAt: "2026-02-01T00:00:00.000Z",
+      };
+      await expect(
+        repository.commit({
+          subscriptions: [changed],
+          eventRateEnrichments: [
+            enrichment({ eventId: added.id, ratePpm: createPartsPerMillion(2_000_000) }),
+          ],
+          settings: { ...originalSettings, displayCurrency: "EUR" },
+        }),
+      ).rejects.toMatchObject({ name: "ConstraintError" });
+
+      expect(await repository.getSubscription(record.id)).toEqual(record);
+      expect(await repository.getEventRateEnrichment(added.id)).toEqual(captured);
+      expect(await repository.getSettings()).toEqual(originalSettings);
     });
 
     it("rolls back all related writes when one write fails", async () => {
@@ -150,7 +227,7 @@ export function runRepositoryContract(
           events: [newEvent, originalEvent],
           settings: changedSettings,
         }),
-      ).rejects.toBeDefined();
+      ).rejects.toMatchObject({ name: "ConstraintError" });
 
       expect(await repository.getSubscription(original.id)).toEqual(original);
       expect(await repository.listEvents(original.id)).toEqual([originalEvent]);
@@ -162,7 +239,10 @@ export function runRepositoryContract(
         repository.commit({
           events: [event({ subscriptionId: "01999999-9999-7999-8999-999999999999" })],
         }),
-      ).rejects.toBeDefined();
+      ).rejects.toMatchObject({
+        name: "DataError",
+        message: "An event must reference an existing subscription.",
+      });
 
       await expect(
         repository.commit({ subscriptions: [subscription({ amountMinor: 10.5 })] }),
@@ -170,9 +250,37 @@ export function runRepositoryContract(
       await expect(
         repository.commit({
           subscriptions: [subscription()],
-          events: [event({ usdRatePpm: 1.5 })],
+          events: [event()],
+          eventRateEnrichments: [enrichment({ ratePpm: 1.5 as PartsPerMillion })],
         }),
       ).rejects.toThrow(/safe integer/);
+    });
+
+    it("requires consistent billing anchors for dated month-based subscriptions", async () => {
+      const anchored = subscription({
+        nextBillingDate: "2026-02-28",
+        billingAnchorDay: 30,
+        billingAnchorIsMonthEnd: false,
+      });
+      await expect(repository.commit({ subscriptions: [anchored] })).resolves.toBeUndefined();
+
+      await expect(
+        repository.commit({
+          subscriptions: [subscription({ nextBillingDate: "2026-02-28", billingAnchorDay: 28 })],
+        }),
+      ).rejects.toThrow(/both billing anchor fields/);
+      await expect(
+        repository.commit({
+          subscriptions: [
+            subscription({
+              cadence: "weekly",
+              nextBillingDate: "2026-02-28",
+              billingAnchorDay: 28,
+              billingAnchorIsMonthEnd: true,
+            }),
+          ],
+        }),
+      ).rejects.toThrow(/month-based cadence/);
     });
 
     it("permanently erases related event history in the same operation", async () => {
@@ -180,10 +288,12 @@ export function runRepositoryContract(
       await repository.commit({
         subscriptions: [record],
         events: [event({ subscriptionId: record.id })],
+        eventRateEnrichments: [enrichment()],
       });
 
       await repository.eraseSubscription(record.id);
       expect(await repository.listEvents(record.id)).toEqual([]);
+      expect(await repository.listEventRateEnrichments()).toEqual([]);
     });
   });
 }
@@ -214,7 +324,18 @@ function event(overrides: Partial<SubscriptionEvent> = {}): SubscriptionEvent {
     currency: "USD",
     cadence: "monthly",
     monthlyEquivalentMinor: 1_000,
-    usdRatePpm: null,
+    ...overrides,
+  };
+}
+
+function enrichment(overrides: Partial<EventRateEnrichment> = {}): EventRateEnrichment {
+  return {
+    eventId: "01900000-0000-7000-8000-000000000001",
+    ratePpm: createPartsPerMillion(1_000_000),
+    source: "frankfurter",
+    rateFetchedAt: "2026-01-01T00:00:00.000Z",
+    enrichedAt: "2026-01-01T00:00:00.000Z",
+    provenance: "captured",
     ...overrides,
   };
 }

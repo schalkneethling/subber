@@ -29,6 +29,20 @@ test.describe("application shell", () => {
     `);
   });
 
+  test("offers a visible skip link as the first keyboard target", async ({ page }) => {
+    await page.goto("/");
+
+    const skipLink = page.getByRole("link", { name: "Skip to main content" });
+    await page.keyboard.press("Tab");
+
+    await expect(skipLink).toBeFocused();
+    await expect(skipLink).toBeVisible();
+    await expect(skipLink).toBeInViewport();
+
+    await skipLink.press("Enter");
+    await expect(page.getByRole("main")).toBeFocused();
+  });
+
   test("has no automatically detectable WCAG 2.2 AA violations", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("main")).toBeVisible();

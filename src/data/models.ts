@@ -2,6 +2,22 @@ export type BillingChannel = "direct" | "apple" | "google" | "paypal" | "other";
 
 export type BillingCadence = "weekly" | "monthly" | "quarterly" | "biannual" | "annual" | "custom";
 
+declare const partsPerMillionBrand: unique symbol;
+export type PartsPerMillion = number & {
+  readonly [partsPerMillionBrand]: "PartsPerMillion";
+};
+
+export type RateSource = "frankfurter" | "fallback";
+
+export interface EventRateEnrichment {
+  eventId: string;
+  ratePpm: PartsPerMillion;
+  source: RateSource;
+  rateFetchedAt: string;
+  enrichedAt: string;
+  provenance: "captured" | "backfilled";
+}
+
 export interface Subscription {
   id: string;
   serviceId: string | null;
@@ -11,6 +27,8 @@ export interface Subscription {
   cadence: BillingCadence;
   customIntervalDays?: number;
   nextBillingDate?: string;
+  billingAnchorDay?: number;
+  billingAnchorIsMonthEnd?: boolean;
   billingChannel: BillingChannel;
   cancellationUrlOverride?: string;
   cancellationNote?: string;
@@ -32,7 +50,13 @@ export interface SubscriptionEvent {
   currency: string;
   cadence: BillingCadence;
   monthlyEquivalentMinor: number;
-  usdRatePpm: number | null;
+}
+
+export function createPartsPerMillion(value: number): PartsPerMillion {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError("Parts per million must be a positive safe integer");
+  }
+  return value as PartsPerMillion;
 }
 
 export interface Settings {

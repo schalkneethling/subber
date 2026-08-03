@@ -1,7 +1,7 @@
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from "idb";
 
 import { CURRENT_SCHEMA_VERSION, migrationsBetween } from "./migrations.js";
-import type { Settings, Subscription, SubscriptionEvent } from "./models.js";
+import type { EventRateEnrichment, Settings, Subscription, SubscriptionEvent } from "./models.js";
 import type {
   RepositoryCommit,
   SubscriptionCollection,
@@ -25,6 +25,10 @@ interface SubberDatabase extends DBSchema {
     value: SubscriptionEvent;
     indexes: { "by-subscription": string };
   };
+  eventRateEnrichments: {
+    key: string;
+    value: EventRateEnrichment;
+  };
   settings: {
     key: string;
     value: Settings;
@@ -33,12 +37,36 @@ interface SubberDatabase extends DBSchema {
 
 type UpgradeTransaction = IDBPTransaction<
   SubberDatabase,
-  Array<"subscriptions" | "events" | "settings">,
+  Array<"subscriptions" | "events" | "eventRateEnrichments" | "settings">,
   "versionchange"
 >;
 
 export interface IndexedDbRepositoryOptions {
   databaseName?: string;
+  /** Receives connection lifecycle failures in addition to open rejection when applicable. */
+  onLifecycleError?: (error: IndexedDbLifecycleError) => void;
+  /** @internal Allows deterministic testing of browser open lifecycle events. */
+  openDatabase?: typeof openDB;
+}
+
+export type IndexedDbLifecycleFailure = "blocked" | "blocking" | "terminated";
+
+export class IndexedDbLifecycleError extends Error {
+  readonly failure: IndexedDbLifecycleFailure;
+  readonly currentVersion: number | null;
+  readonly blockedVersion: number | null;
+
+  constructor(
+    failure: IndexedDbLifecycleFailure,
+    currentVersion: number | null = null,
+    blockedVersion: number | null = null,
+  ) {
+    super(lifecycleErrorMessage(failure));
+    this.name = "IndexedDbLifecycleError";
+    this.failure = failure;
+    this.currentVersion = currentVersion;
+    this.blockedVersion = blockedVersion;
+  }
 }
 
 export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
@@ -51,15 +79,53 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
   static async open(
     options: IndexedDbRepositoryOptions = {},
   ): Promise<IndexedDbSubscriptionRepository> {
-    const database = await openDB<SubberDatabase>(
+    let openedDatabase: IDBPDatabase<SubberDatabase> | undefined;
+    let blocked = false;
+    let rejectBlocked!: (error: IndexedDbLifecycleError) => void;
+    const blockedPromise = new Promise<never>((_resolve, reject) => {
+      rejectBlocked = reject;
+    });
+    const report = (
+      failure: IndexedDbLifecycleFailure,
+      currentVersion: number | null = null,
+      blockedVersion: number | null = null,
+    ) => {
+      options.onLifecycleError?.(
+        new IndexedDbLifecycleError(failure, currentVersion, blockedVersion),
+      );
+    };
+    const openPromise = (options.openDatabase ?? openDB)<SubberDatabase>(
       options.databaseName ?? "subber",
       CURRENT_SCHEMA_VERSION,
       {
+        blocked(currentVersion, blockedVersion) {
+          if (blocked) return;
+          blocked = true;
+          const error = new IndexedDbLifecycleError("blocked", currentVersion, blockedVersion);
+          rejectBlocked(error);
+          options.onLifecycleError?.(error);
+        },
+        blocking(currentVersion, blockedVersion) {
+          openedDatabase?.close();
+          report("blocking", currentVersion, blockedVersion);
+        },
+        terminated() {
+          report("terminated");
+        },
         upgrade(database, oldVersion, newVersion, transaction) {
           applyMigrations(database, transaction, oldVersion, newVersion ?? CURRENT_SCHEMA_VERSION);
         },
       },
     );
+    void openPromise.then(
+      (database) => {
+        if (blocked) database.close();
+      },
+      () => undefined,
+    );
+
+    const database = await Promise.race([openPromise, blockedPromise]);
+    openedDatabase = database;
 
     return new IndexedDbSubscriptionRepository(database);
   }
@@ -102,11 +168,28 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
     return settings;
   }
 
+  async getEventRateEnrichment(eventId: string): Promise<EventRateEnrichment | null> {
+    const enrichment = await this.#database.get("eventRateEnrichments", eventId);
+    if (!enrichment) return null;
+    validateEventRateEnrichment(enrichment);
+    return enrichment;
+  }
+
+  async listEventRateEnrichments(): Promise<EventRateEnrichment[]> {
+    const enrichments = await this.#database.getAll("eventRateEnrichments");
+    enrichments.forEach(validateEventRateEnrichment);
+    return enrichments.sort(
+      (left, right) =>
+        right.enrichedAt.localeCompare(left.enrichedAt) ||
+        right.eventId.localeCompare(left.eventId),
+    );
+  }
+
   async commit(unitOfWork: RepositoryCommit): Promise<void> {
     validateCommit(unitOfWork);
 
     const transaction = this.#database.transaction(
-      ["subscriptions", "events", "settings"],
+      ["subscriptions", "events", "eventRateEnrichments", "settings"],
       "readwrite",
     );
 
@@ -119,9 +202,16 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
           .objectStore("subscriptions")
           .get(event.subscriptionId);
         if (!subscription) {
-          throw new DOMException("An event must reference an existing subscription", "DataError");
+          throw new DOMException("An event must reference an existing subscription.", "DataError");
         }
         await transaction.objectStore("events").add(event);
+      }
+      for (const enrichment of unitOfWork.eventRateEnrichments ?? []) {
+        const event = await transaction.objectStore("events").get(enrichment.eventId);
+        if (!event) {
+          throw new DOMException("A rate enrichment must reference an existing event", "DataError");
+        }
+        await transaction.objectStore("eventRateEnrichments").add(enrichment);
       }
       if (unitOfWork.settings) {
         await transaction.objectStore("settings").put(unitOfWork.settings, SETTINGS_KEY);
@@ -139,16 +229,35 @@ export class IndexedDbSubscriptionRepository implements SubscriptionRepository {
   }
 
   async eraseSubscription(id: string): Promise<void> {
-    const transaction = this.#database.transaction(["subscriptions", "events"], "readwrite");
+    const transaction = this.#database.transaction(
+      ["subscriptions", "events", "eventRateEnrichments"],
+      "readwrite",
+    );
     const events = await transaction.objectStore("events").index("by-subscription").getAllKeys(id);
 
     await transaction.objectStore("subscriptions").delete(id);
-    await Promise.all(events.map((eventId) => transaction.objectStore("events").delete(eventId)));
+    await Promise.all(
+      events.flatMap((eventId) => [
+        transaction.objectStore("eventRateEnrichments").delete(eventId),
+        transaction.objectStore("events").delete(eventId),
+      ]),
+    );
     await transaction.done;
   }
 
   close(): void {
     this.#database.close();
+  }
+}
+
+function lifecycleErrorMessage(failure: IndexedDbLifecycleFailure): string {
+  switch (failure) {
+    case "blocked":
+      return "IndexedDB upgrade is blocked by another open connection";
+    case "blocking":
+      return "This IndexedDB connection is blocking a schema change";
+    case "terminated":
+      return "The browser terminated the IndexedDB connection unexpectedly";
   }
 }
 
@@ -164,6 +273,7 @@ function applyMigrations(
         database.createObjectStore("subscriptions", { keyPath: "id" });
         const events = database.createObjectStore("events", { keyPath: "id" });
         events.createIndex("by-subscription", "subscriptionId");
+        database.createObjectStore("eventRateEnrichments", { keyPath: "eventId" });
         database.createObjectStore("settings");
         break;
       }
@@ -187,6 +297,9 @@ function compareSubscriptions(collection: SubscriptionCollection) {
 function validateCommit(unitOfWork: RepositoryCommit): void {
   for (const subscription of unitOfWork.subscriptions ?? []) validateSubscription(subscription);
   for (const event of unitOfWork.events ?? []) validateEvent(event);
+  for (const enrichment of unitOfWork.eventRateEnrichments ?? []) {
+    validateEventRateEnrichment(enrichment);
+  }
   if (unitOfWork.settings) validateSettings(unitOfWork.settings);
 }
 
@@ -221,6 +334,7 @@ function validateSubscription(subscription: Subscription): void {
   if (subscription.noticePeriodDays !== undefined) {
     assertInteger(subscription.noticePeriodDays, "subscription.noticePeriodDays", 0);
   }
+  validateBillingAnchor(subscription);
   assertOptionalString(
     subscription.cancellationUrlOverride,
     "subscription.cancellationUrlOverride",
@@ -239,7 +353,6 @@ function validateEvent(event: SubscriptionEvent): void {
   assertNonEmptyString(event.subscriptionId, "event.subscriptionId", MAX_ID_LENGTH);
   assertInteger(event.amountMinor, "event.amountMinor", 0);
   assertInteger(event.monthlyEquivalentMinor, "event.monthlyEquivalentMinor", 0);
-  if (event.usdRatePpm !== null) assertInteger(event.usdRatePpm, "event.usdRatePpm", 0);
   assertCurrency(event.currency);
   assertOneOf(
     event.cadence,
@@ -248,6 +361,37 @@ function validateEvent(event: SubscriptionEvent): void {
   );
   assertOneOf(event.type, ["added", "removed", "restored", "price_changed"], "event.type");
   assertIsoInstant(event.occurredAt, "event.occurredAt");
+}
+
+function validateEventRateEnrichment(enrichment: EventRateEnrichment): void {
+  assertNonEmptyString(enrichment.eventId, "enrichment.eventId", MAX_ID_LENGTH);
+  assertInteger(enrichment.ratePpm, "enrichment.ratePpm", 1);
+  assertOneOf(enrichment.source, ["frankfurter", "fallback"], "enrichment.source");
+  assertIsoInstant(enrichment.rateFetchedAt, "enrichment.rateFetchedAt");
+  assertIsoInstant(enrichment.enrichedAt, "enrichment.enrichedAt");
+  assertOneOf(enrichment.provenance, ["captured", "backfilled"], "enrichment.provenance");
+}
+
+function validateBillingAnchor(subscription: Subscription): void {
+  const monthBased = ["monthly", "quarterly", "biannual", "annual"].includes(subscription.cadence);
+  const hasAnchorDay = subscription.billingAnchorDay !== undefined;
+  const hasMonthEnd = subscription.billingAnchorIsMonthEnd !== undefined;
+
+  if (!monthBased || subscription.nextBillingDate === undefined) {
+    if (hasAnchorDay || hasMonthEnd) {
+      throw new TypeError("Billing anchors require a month-based cadence and nextBillingDate");
+    }
+    return;
+  }
+  if (!hasAnchorDay || !hasMonthEnd) {
+    throw new TypeError("Month-based billing dates require both billing anchor fields");
+  }
+
+  assertInteger(subscription.billingAnchorDay, "subscription.billingAnchorDay", 1);
+  if (subscription.billingAnchorDay > 31) {
+    throw new TypeError("subscription.billingAnchorDay must not exceed 31");
+  }
+  assertBoolean(subscription.billingAnchorIsMonthEnd, "subscription.billingAnchorIsMonthEnd");
 }
 
 function validateSettings(settings: Settings): void {

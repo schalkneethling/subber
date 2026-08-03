@@ -1,4 +1,11 @@
-export { IndexedDbSubscriptionRepository } from "./indexed-db-repository.js";
+export {
+  IndexedDbLifecycleError,
+  IndexedDbSubscriptionRepository,
+} from "./indexed-db-repository.js";
+export type {
+  IndexedDbLifecycleFailure,
+  IndexedDbRepositoryOptions,
+} from "./indexed-db-repository.js";
 export {
   CURRENT_SCHEMA_VERSION,
   MIGRATIONS,
@@ -8,11 +15,15 @@ export {
 export type {
   BillingCadence,
   BillingChannel,
+  EventRateEnrichment,
+  PartsPerMillion,
+  RateSource,
   Settings,
   Subscription,
   SubscriptionEvent,
   SubscriptionEventType,
 } from "./models.js";
+export { createPartsPerMillion } from "./models.js";
 export type {
   RepositoryCommit,
   SubscriptionCollection,

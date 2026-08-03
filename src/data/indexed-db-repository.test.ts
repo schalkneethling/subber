@@ -1,9 +1,13 @@
 import "fake-indexeddb/auto";
 
-import { describe, expect, it } from "vitest";
+import type { DBSchema, IDBPDatabase, OpenDBCallbacks } from "idb";
+import { describe, expect, it, vi } from "vitest";
 
 import { CURRENT_SCHEMA_VERSION } from "./migrations.js";
-import { IndexedDbSubscriptionRepository } from "./indexed-db-repository.js";
+import {
+  IndexedDbLifecycleError,
+  IndexedDbSubscriptionRepository,
+} from "./indexed-db-repository.js";
 import { runRepositoryContract } from "./repository-contract.js";
 
 let databaseSequence = 0;
@@ -27,8 +31,112 @@ describe("IndexedDB migrations", () => {
     });
 
     expect(database.version).toBe(CURRENT_SCHEMA_VERSION);
-    expect([...database.objectStoreNames]).toEqual(["events", "settings", "subscriptions"]);
+    expect([...database.objectStoreNames]).toEqual([
+      "eventRateEnrichments",
+      "events",
+      "settings",
+      "subscriptions",
+    ]);
     database.close();
+  });
+
+  it("rejects a blocked open and closes a connection that resolves later", async () => {
+    let blockedCallback:
+      | ((
+          currentVersion: number,
+          blockedVersion: number | null,
+          event: IDBVersionChangeEvent,
+        ) => void)
+      | undefined;
+    let resolveOpen!: (database: IDBPDatabase) => void;
+    const close = vi.fn<() => void>();
+    const pendingOpen = new Promise<IDBPDatabase>((resolve) => {
+      resolveOpen = resolve;
+    });
+    const openDatabase = <DBTypes extends DBSchema | unknown = unknown>(
+      _name: string,
+      _version?: number,
+      suppliedCallbacks: OpenDBCallbacks<DBTypes> = {},
+    ): Promise<IDBPDatabase<DBTypes>> => {
+      blockedCallback = suppliedCallbacks.blocked;
+      return pendingOpen as Promise<IDBPDatabase<DBTypes>>;
+    };
+    const lifecycleErrors: IndexedDbLifecycleError[] = [];
+    const opening = IndexedDbSubscriptionRepository.open({
+      databaseName: `subber-blocked-${databaseSequence++}`,
+      openDatabase,
+      onLifecycleError(error) {
+        lifecycleErrors.push(error);
+      },
+    });
+
+    blockedCallback?.(1, 2, {} as IDBVersionChangeEvent);
+
+    await expect(opening).rejects.toBe(lifecycleErrors[0]);
+    expect(lifecycleErrors[0]).toMatchObject({
+      failure: "blocked",
+      currentVersion: 1,
+      blockedVersion: 2,
+    });
+
+    resolveOpen({ close } as unknown as IDBPDatabase);
+    await pendingOpen;
+    await Promise.resolve();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("reports and releases a connection that blocks a future schema version", async () => {
+    const databaseName = `subber-blocking-${databaseSequence++}`;
+    const lifecycleErrors: IndexedDbLifecycleError[] = [];
+    const repository = await IndexedDbSubscriptionRepository.open({
+      databaseName,
+      onLifecycleError(error) {
+        lifecycleErrors.push(error);
+      },
+    });
+
+    const upgradedDatabase = await openRawDatabase(databaseName, CURRENT_SCHEMA_VERSION + 1);
+
+    expect(lifecycleErrors).toHaveLength(1);
+    expect(lifecycleErrors[0]).toBeInstanceOf(IndexedDbLifecycleError);
+    expect(lifecycleErrors[0]).toMatchObject({
+      failure: "blocking",
+      currentVersion: CURRENT_SCHEMA_VERSION,
+      blockedVersion: CURRENT_SCHEMA_VERSION + 1,
+    });
+    upgradedDatabase.close();
+    repository.close();
+  });
+
+  it("reports an abnormal termination with null version metadata", async () => {
+    let terminatedCallback: (() => void) | undefined;
+    const close = vi.fn<() => void>();
+    const openDatabase = <DBTypes extends DBSchema | unknown = unknown>(
+      _name: string,
+      _version?: number,
+      suppliedCallbacks: OpenDBCallbacks<DBTypes> = {},
+    ): Promise<IDBPDatabase<DBTypes>> => {
+      terminatedCallback = suppliedCallbacks.terminated;
+      return Promise.resolve({ close } as unknown as IDBPDatabase<DBTypes>);
+    };
+    const lifecycleErrors: IndexedDbLifecycleError[] = [];
+    const repository = await IndexedDbSubscriptionRepository.open({
+      openDatabase,
+      onLifecycleError(error) {
+        lifecycleErrors.push(error);
+      },
+    });
+
+    terminatedCallback?.();
+
+    expect(lifecycleErrors).toHaveLength(1);
+    expect(lifecycleErrors[0]).toMatchObject({
+      failure: "terminated",
+      currentVersion: null,
+      blockedVersion: null,
+    });
+    repository.close();
+    expect(close).toHaveBeenCalledOnce();
   });
 });
 
@@ -65,8 +173,8 @@ describe("IndexedDB trust boundary", () => {
   });
 });
 
-async function openRawDatabase(databaseName: string): Promise<IDBDatabase> {
-  const request = indexedDB.open(databaseName);
+async function openRawDatabase(databaseName: string, version?: number): Promise<IDBDatabase> {
+  const request = indexedDB.open(databaseName, version);
   return new Promise((resolve, reject) => {
     request.addEventListener("success", () => resolve(request.result));
     request.addEventListener("error", () => reject(request.error));

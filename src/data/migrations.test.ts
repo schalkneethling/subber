@@ -5,6 +5,7 @@ import {
   MIGRATIONS,
   migrationsBetween,
   runMigrations,
+  type MigrationDefinition,
 } from "./migrations.js";
 
 describe("migration definitions", () => {
@@ -24,10 +25,18 @@ describe("migration definitions", () => {
   });
 
   it("stops at a failed migration without applying later definitions", async () => {
+    const definitions = [
+      { version: 1, name: "fixture-first" },
+      { version: 2, name: "fixture-second" },
+    ] as const;
     const failure = new Error("migration failed");
-    const apply = vi.fn().mockRejectedValueOnce(failure);
+    const apply = vi.fn<(migration: MigrationDefinition) => Promise<void>>(async ({ version }) => {
+      if (version === 1) throw failure;
+    });
 
-    await expect(runMigrations(0, CURRENT_SCHEMA_VERSION, apply)).rejects.toBe(failure);
+    await expect(runMigrations(0, 2, apply, definitions)).rejects.toBe(failure);
     expect(apply).toHaveBeenCalledTimes(1);
+    expect(apply).toHaveBeenCalledWith(definitions[0]);
+    expect(apply).not.toHaveBeenCalledWith(definitions[1]);
   });
 });

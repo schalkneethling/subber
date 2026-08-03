@@ -21,5 +21,6 @@ test-results/
 # Varlock recommends committing non-local .env.* files.
 # Review broader existing ignore rules before opting into that convention.
 !.env.schema
+.env
 .env.local
 .env.*.local

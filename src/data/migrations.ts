@@ -9,7 +9,11 @@ export const MIGRATIONS = [
 
 export const CURRENT_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
 
-export function migrationsBetween(fromVersion: number, toVersion: number): MigrationDefinition[] {
+export function migrationsBetween(
+  fromVersion: number,
+  toVersion: number,
+  definitions: readonly MigrationDefinition[] = MIGRATIONS,
+): MigrationDefinition[] {
   assertSchemaVersion(fromVersion);
   assertSchemaVersion(toVersion);
 
@@ -17,7 +21,7 @@ export function migrationsBetween(fromVersion: number, toVersion: number): Migra
     throw new RangeError("Schema downgrades are not supported");
   }
 
-  const migrations = MIGRATIONS.filter(
+  const migrations = definitions.filter(
     ({ version }) => version > fromVersion && version <= toVersion,
   );
 
@@ -36,10 +40,11 @@ export async function runMigrations(
   fromVersion: number,
   toVersion: number,
   apply: (migration: MigrationDefinition) => void | Promise<void>,
+  definitions: readonly MigrationDefinition[] = MIGRATIONS,
 ): Promise<number> {
   let appliedVersion = fromVersion;
 
-  for (const migration of migrationsBetween(fromVersion, toVersion)) {
+  for (const migration of migrationsBetween(fromVersion, toVersion, definitions)) {
     await apply(migration);
     appliedVersion = migration.version;
   }
